@@ -393,4 +393,4 @@ export default function StudySpaces() {
       </div>
     </DashboardLayout>
   );
-}
+} 
