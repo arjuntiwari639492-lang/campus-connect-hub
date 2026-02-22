@@ -1,76 +1,98 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { ItemCard } from "@/components/cards/ItemCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Search, SlidersHorizontal } from "lucide-react";
+import { Plus, Search, SlidersHorizontal, Loader2, ImagePlus } from "lucide-react";
+import { supabase } from "@/lib/supabase";
+import { useToast } from "@/hooks/use-toast";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const categories = ["All", "Textbooks", "Electronics", "Furniture", "Clothing", "Other"];
 
-const mockItems = [
-  {
-    id: "1",
-    image: "https://images.unsplash.com/photo-1544947950-fa07a98d237f?w=400&h=400&fit=crop",
-    name: "Calculus: Early Transcendentals",
-    price: 45,
-    seller: "Alex M.",
-    category: "Textbooks",
-    condition: "Like New",
-  },
-  {
-    id: "2",
-    image: "https://images.unsplash.com/photo-1517336714731-489689fd1ca8?w=400&h=400&fit=crop",
-    name: "MacBook Pro 13\" 2021",
-    price: 899,
-    seller: "Sarah K.",
-    category: "Electronics",
-    condition: "Excellent",
-  },
-  {
-    id: "3",
-    image: "https://images.unsplash.com/photo-1555041469-a586c61ea9bc?w=400&h=400&fit=crop",
-    name: "Modern Desk Chair",
-    price: 75,
-    seller: "Mike T.",
-    category: "Furniture",
-    condition: "Good",
-  },
-  {
-    id: "4",
-    image: "https://images.unsplash.com/photo-1491336477066-31156b5e4f35?w=400&h=400&fit=crop",
-    name: "TI-84 Plus Calculator",
-    price: 60,
-    seller: "Emma L.",
-    category: "Electronics",
-    condition: "Like New",
-  },
-  {
-    id: "5",
-    image: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400&h=400&fit=crop",
-    name: "Organic Chemistry Textbook",
-    price: 55,
-    seller: "James W.",
-    category: "Textbooks",
-    condition: "Good",
-  },
-  {
-    id: "6",
-    image: "https://images.unsplash.com/photo-1593642632559-0c6d3fc62b89?w=400&h=400&fit=crop",
-    name: "iPad Air 4th Gen",
-    price: 420,
-    seller: "Lisa R.",
-    category: "Electronics",
-    condition: "Excellent",
-  },
-];
+interface MarketplaceItem {
+  id: string;
+  title: string;
+  description: string;
+  price: number;
+  category: string;
+  condition: string;
+  image_url: string;
+  seller: { full_name: string } | null;
+}
 
 export default function Marketplace() {
+  const [items, setItems] = useState<MarketplaceItem[]>([]);
+  const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("All");
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [newItem, setNewItem] = useState({ title: "", description: "", price: "", category: "Other", condition: "Good" });
+  const [submitting, setSubmitting] = useState(false);
+  const { toast } = useToast();
 
-  const filteredItems = mockItems.filter((item) => {
-    const matchesSearch = item.name.toLowerCase().includes(searchQuery.toLowerCase());
+  const fetchItems = useCallback(async () => {
+    setLoading(true);
+    const { data, error } = await supabase
+      .from('marketplace_items')
+      .select(`
+        *,
+        seller:profiles(full_name)
+      `)
+      .eq('status', 'active')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      toast({ variant: "destructive", title: "Error", description: error.message });
+    } else {
+      setItems(data || []);
+    }
+    setLoading(false);
+  }, [toast]);
+
+  useEffect(() => {
+    fetchItems();
+  }, [fetchItems]);
+
+  const handlePostItem = async () => {
+    setSubmitting(true);
+    const { data: { user } } = await supabase.auth.getUser();
+
+    if (!user) {
+      toast({ variant: "destructive", title: "Error", description: "You must be logged in to post." });
+      setSubmitting(false);
+      return;
+    }
+
+    const { error } = await supabase
+      .from('marketplace_items')
+      .insert({
+        seller_id: user.id,
+        title: newItem.title,
+        description: newItem.description,
+        price: parseFloat(newItem.price),
+        category: newItem.category,
+        condition: newItem.condition,
+        image_url: "https://images.unsplash.com/photo-1555041469-a586c61ea9bc?w=400&h=400&fit=crop" // Placeholder for now
+      });
+
+    if (error) {
+      toast({ variant: "destructive", title: "Error", description: error.message });
+    } else {
+      toast({ title: "Success", description: "Item posted successfully!" });
+      setIsDialogOpen(false);
+      setNewItem({ title: "", description: "", price: "", category: "Other", condition: "Good" });
+      fetchItems();
+    }
+    setSubmitting(false);
+  };
+
+  const filteredItems = items.filter((item) => {
+    const matchesSearch = item.title?.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesCategory = selectedCategory === "All" || item.category === selectedCategory;
     return matchesSearch && matchesCategory;
   });
@@ -84,10 +106,78 @@ export default function Marketplace() {
             <h1 className="text-3xl font-bold text-foreground">Marketplace</h1>
             <p className="text-muted-foreground">Buy and sell with fellow students</p>
           </div>
-          <Button className="gap-2">
-            <Plus className="h-4 w-4" />
-            Post New Item
-          </Button>
+
+          <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+            <DialogTrigger asChild>
+              <Button className="gap-2">
+                <Plus className="h-4 w-4" />
+                Post New Item
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Sell an Item</DialogTitle>
+                <DialogDescription>List your item for sale on the campus marketplace.</DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4 py-4">
+                <div className="space-y-2">
+                  <Label>Title</Label>
+                  <Input
+                    value={newItem.title}
+                    onChange={(e) => setNewItem({ ...newItem, title: e.target.value })}
+                    placeholder="e.g. Calculus Textbook"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Price ($)</Label>
+                  <Input
+                    type="number"
+                    value={newItem.price}
+                    onChange={(e) => setNewItem({ ...newItem, price: e.target.value })}
+                    placeholder="0.00"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Category</Label>
+                    <Select value={newItem.category} onValueChange={(val) => setNewItem({ ...newItem, category: val })}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {categories.filter(c => c !== "All").map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Condition</Label>
+                    <Select value={newItem.condition} onValueChange={(val) => setNewItem({ ...newItem, condition: val })}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="New">New</SelectItem>
+                        <SelectItem value="Like New">Like New</SelectItem>
+                        <SelectItem value="Good">Good</SelectItem>
+                        <SelectItem value="Fair">Fair</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label>Description</Label>
+                  <Textarea
+                    value={newItem.description}
+                    onChange={(e) => setNewItem({ ...newItem, description: e.target.value })}
+                    placeholder="Describe your item..."
+                  />
+                </div>
+                <Button onClick={handlePostItem} className="w-full" disabled={submitting}>
+                  {submitting ? <Loader2 className="animate-spin h-4 w-4" /> : "Post Item"}
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
         </div>
 
         {/* Search & Filters */}
@@ -122,14 +212,27 @@ export default function Marketplace() {
         </div>
 
         {/* Items Grid */}
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6 animate-slide-up" style={{ animationDelay: "0.2s" }}>
-          {filteredItems.map((item) => (
-            <ItemCard key={item.id} {...item} />
-          ))}
-        </div>
+        {loading ? (
+          <div className="flex justify-center py-12"><Loader2 className="animate-spin h-8 w-8 text-primary" /></div>
+        ) : (
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6 animate-slide-up" style={{ animationDelay: "0.2s" }}>
+            {filteredItems.map((item) => (
+              <ItemCard
+                key={item.id}
+                id={item.id}
+                name={item.title}
+                price={item.price}
+                image={item.image_url || "https://images.unsplash.com/photo-1544947950-fa07a98d237f?w=400&h=400&fit=crop"}
+                seller={item.seller?.full_name || "Unknown"}
+                category={item.category}
+                condition={item.condition}
+              />
+            ))}
+          </div>
+        )}
 
         {/* Empty State */}
-        {filteredItems.length === 0 && (
+        {!loading && filteredItems.length === 0 && (
           <div className="text-center py-12">
             <p className="text-muted-foreground">No items found matching your criteria.</p>
             <Button variant="link" onClick={() => { setSearchQuery(""); setSelectedCategory("All"); }}>
